@@ -224,6 +224,78 @@ def _patch_vendored_openpi_output_unnormalize(vendored_source_root: Path) -> str
     return f"patch    : vendored OpenPI output unnormalize -> {transforms_path}"
 
 
+def _patch_vendored_openpi_restore_dtype(vendored_source_root: Path) -> str:
+    """Restore the project-level checkpoint/BF16/FP32 restore selector.
+
+    Upstream OpenPI currently restores JAX parameters as BF16 unconditionally.
+    The Origami inference runtime exposes an explicit selector, so reapply this
+    small inference-only extension whenever ``vendor/openpi/src`` is refreshed.
+    """
+    policy_path = vendored_source_root / "openpi" / "policies" / "policy_config.py"
+    if not policy_path.is_file():
+        return f"missing  : vendored OpenPI policy config -> {policy_path}"
+    source = policy_path.read_text(encoding="utf-8")
+    if "def _normalize_restore_dtype(restore_dtype: Any)" in source:
+        return f"skip     : vendored OpenPI restore-dtype patch already present -> {policy_path}"
+
+    import_marker = "import openpi.transforms as transforms\n\n\n"
+    helper = '''def _normalize_restore_dtype(restore_dtype: Any) -> Any:
+    """Map the inference restore-dtype selector to an Orbax/JAX dtype."""
+    if restore_dtype in (None, ""):
+        return None
+    if isinstance(restore_dtype, str):
+        normalized = restore_dtype.strip().lower()
+        if normalized in ("checkpoint", "native", "none"):
+            return None
+        if normalized in ("bf16", "bfloat16"):
+            return jnp.bfloat16
+        if normalized in ("fp32", "float32"):
+            return jnp.float32
+        if normalized in ("fp16", "float16"):
+            return jnp.float16
+        raise ValueError(
+            "restore_dtype must be one of bfloat16/bf16, float32/fp32, "
+            f"float16/fp16, or checkpoint/native/none. Got {restore_dtype!r}."
+        )
+    return restore_dtype
+
+
+'''
+    signature_old = "    ppo_deterministic: bool | None = None,\n) -> _policy.Policy:\n"
+    signature_new = (
+        "    ppo_deterministic: bool | None = None,\n"
+        "    restore_dtype: Any = jnp.bfloat16,\n"
+        ") -> _policy.Policy:\n"
+    )
+    recursive_old = "            pytorch_device=pytorch_device,\n        )\n        return lehome_ppo_policy"
+    recursive_new = (
+        "            pytorch_device=pytorch_device,\n"
+        "            restore_dtype=restore_dtype,\n"
+        "        )\n"
+        "        return lehome_ppo_policy"
+    )
+    restore_old = (
+        "model = train_config.model.load(_model.restore_params(checkpoint_dir / \"params\", dtype=jnp.bfloat16))"
+    )
+    restore_new = '''model = train_config.model.load(
+            _model.restore_params(
+                checkpoint_dir / "params",
+                dtype=_normalize_restore_dtype(restore_dtype),
+            )
+        )'''
+    if any(fragment not in source for fragment in (import_marker, signature_old, recursive_old, restore_old)):
+        raise RuntimeError(
+            "Cannot apply the vendored OpenPI restore-dtype patch: expected upstream policy_config.py "
+            f"structure was not found in {policy_path}."
+        )
+    patched = source.replace(import_marker, import_marker + helper, 1)
+    patched = patched.replace(signature_old, signature_new, 1)
+    patched = patched.replace(recursive_old, recursive_new, 1)
+    patched = patched.replace(restore_old, restore_new, 1)
+    policy_path.write_text(patched, encoding="utf-8")
+    return f"patched  : vendored OpenPI restore dtype -> {policy_path}"
+
+
 def _infer_openpi_source_root(configured_root: Path | None) -> Path | None:
     if configured_root is not None:
         return configured_root
@@ -386,6 +458,7 @@ def prepare_bundle(
                 overwrite=overwrite,
             )
         )
+        messages.append(_patch_vendored_openpi_restore_dtype(vendored_source_root))
         messages.append(_patch_vendored_openpi_output_unnormalize(vendored_source_root))
         messages.append(
             _materialize(
