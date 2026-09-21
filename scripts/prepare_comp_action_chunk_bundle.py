@@ -182,6 +182,48 @@ def _find_future_latent_source(openpi_source_root: Path | None) -> Path | None:
     return next((path for path in candidates if path.is_dir()), None)
 
 
+def _patch_vendored_openpi_output_unnormalize(vendored_source_root: Path) -> str:
+    """Keep inference output unnormalization compatible with input-rich stats.
+
+    Origami checkpoints normalize tactile and planner input fields, while a
+    sampled policy output contains only state/actions. The generic OpenPI
+    Unnormalize transform must therefore operate on available output fields.
+    This inference-only patch is reapplied after refreshing vendor/openpi/src.
+    """
+    transforms_path = vendored_source_root / "openpi" / "transforms.py"
+    if not transforms_path.is_file():
+        return f"missing  : vendored OpenPI transforms -> {transforms_path}"
+    source = transforms_path.read_text(encoding="utf-8")
+    old = """        # Make sure that all the keys in the norm stats are present in the data.
+        return apply_tree(
+            data,
+            self.norm_stats,
+            self._unnormalize_quantile if self.use_quantiles else self._unnormalize,
+            strict=True,
+        )
+"""
+    new = """        # Policy outputs contain only generated fields (normally actions and
+        # occasionally state). Input-only tactile/planner normalization keys
+        # must not be required during output-side unnormalization.
+        return apply_tree(
+            data,
+            self.norm_stats,
+            self._unnormalize_quantile if self.use_quantiles else self._unnormalize,
+            strict=False,
+        )
+"""
+    unnormalize_section = source.partition("class Unnormalize")[2].partition("class OrigamiSplineNormalize")[0]
+    if "strict=False" in unnormalize_section:
+        return f"skip     : vendored OpenPI output unnormalize patch already present -> {transforms_path}"
+    if old not in source:
+        raise RuntimeError(
+            "Cannot apply the inference output-unnormalize compatibility patch; "
+            f"unexpected OpenPI transforms.py schema: {transforms_path}"
+        )
+    transforms_path.write_text(source.replace(old, new, 1), encoding="utf-8")
+    return f"patch    : vendored OpenPI output unnormalize -> {transforms_path}"
+
+
 def _infer_openpi_source_root(configured_root: Path | None) -> Path | None:
     if configured_root is not None:
         return configured_root
@@ -344,6 +386,7 @@ def prepare_bundle(
                 overwrite=overwrite,
             )
         )
+        messages.append(_patch_vendored_openpi_output_unnormalize(vendored_source_root))
         messages.append(
             _materialize(
                 _find_openpi_client_source(openpi_source_root),

@@ -170,12 +170,16 @@ class Unnormalize(DataTransformFn):
         if self.norm_stats is None:
             return data
 
-        # Make sure that all the keys in the norm stats are present in the data.
+        # Policy outputs contain only generated fields (normally actions and
+        # occasionally state). The normalization table also contains input-only
+        # fields such as tactile_prompt and planner features, so output-side
+        # unnormalization must operate on the intersection rather than require
+        # every input key to be present.
         return apply_tree(
             data,
             self.norm_stats,
             self._unnormalize_quantile if self.use_quantiles else self._unnormalize,
-            strict=True,
+            strict=False,
         )
 
     def _unnormalize(self, x, stats: NormStats):
