@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import logging
 import time
 from pathlib import Path
@@ -126,12 +127,24 @@ class OpenPICompActionChunkRuntime:
             logger.warning(
                 "Loading OpenPI params in float32 for testing. This increases GPU memory versus bfloat16."
             )
+        create_policy_kwargs: dict[str, Any] = {
+            "sample_kwargs": {"num_steps": int(self.config.policy_sample_steps)},
+            "default_prompt": self.config.default_prompt,
+        }
+        # OpenPI source revisions in active use differ here. Older/current
+        # policy_config creates policies at checkpoint/native dtype and does
+        # not accept restore_dtype; newer revisions may expose the override.
+        create_policy_signature = inspect.signature(self._openpi_policy_config.create_trained_policy)
+        if "restore_dtype" in create_policy_signature.parameters:
+            create_policy_kwargs["restore_dtype"] = restore_dtype
+        elif normalized_restore_dtype not in (None, "", "checkpoint", "native", "none"):
+            logger.info(
+                "Vendored OpenPI create_trained_policy has no restore_dtype option; using checkpoint-native parameter dtype."
+            )
         self.policy = self._openpi_policy_config.create_trained_policy(
             self.train_config,
             self.checkpoint_dir,
-            sample_kwargs={"num_steps": int(self.config.policy_sample_steps)},
-            default_prompt=self.config.default_prompt,
-            restore_dtype=restore_dtype,
+            **create_policy_kwargs,
         )
         if getattr(self.policy, "_is_pytorch_model", False):
             self._compute_loss_and_metrics = None

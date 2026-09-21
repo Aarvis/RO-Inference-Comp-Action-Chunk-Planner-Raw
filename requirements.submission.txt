@@ -13,7 +13,9 @@ filelock>=3.16.1
 flatbuffers>=24.3.25
 flax==0.10.2
 fsspec>=2024.6.0
-huggingface-hub>=0.30.0
+# transformers 4.x requires the pre-1.0 Hugging Face Hub API. Without this
+# upper bound, pip may install huggingface-hub 1.x and fail before OpenPI loads.
+huggingface-hub>=0.34.0,<1.0
 jax[cuda12]==0.5.3
 jaxtyping==0.2.36
 lerobot @ git+https://github.com/huggingface/lerobot@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5
