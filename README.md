@@ -71,6 +71,22 @@ runtime `openpi.config_name: pi05_origami_comp_action_chunk` plus a snapshot of
 the training-critical OpenPI model, data, weight-loader, and optimizer config
 values used for packaging checks.
 
+### Runtime planner override
+
+The bundle setting `runtime.planner_enabled` is the default. To switch an
+already-built Docker image at launch time, set `ORIGAMI_PLANNER_ENABLED`:
+
+```bash
+# Run DINO, OOI, and the checkpoint planner; pass its features to OpenPI.
+-e ORIGAMI_PLANNER_ENABLED=true
+
+# Skip those modules; OpenPI receives the masked-zero prefix used for
+# planner-dropout training.
+-e ORIGAMI_PLANNER_ENABLED=false
+```
+
+Omit the variable to preserve the value in `model_bundle/bundle.yaml`.
+
 ## Prepare Bundle
 
 Edit `configs/dataset_replay.yaml` first if the source checkpoints are at different paths. Then materialize the bundle:

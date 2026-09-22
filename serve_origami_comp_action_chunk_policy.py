@@ -66,6 +66,15 @@ def build_argument_parser() -> argparse.ArgumentParser:
         default=os.environ.get("ORIGAMI_OPENPI_PARAM_DTYPE"),
         help="Override OpenPI checkpoint restore dtype for testing. Defaults to config/env bfloat16.",
     )
+    parser.add_argument(
+        "--planner-enabled",
+        choices=("true", "false"),
+        default=None,
+        help=(
+            "Override runtime.planner_enabled. false skips DINO/OOI/checkpoint-planner "
+            "and supplies OpenPI's masked zero planner-dropout prefix."
+        ),
+    )
     parser.add_argument("--log-level", default=os.environ.get("LOG_LEVEL", "INFO"))
     return parser
 
@@ -100,6 +109,12 @@ def main() -> int:
         runtime = dataclasses.replace(runtime, device=str(args.device))
     if args.precision is not None:
         runtime = dataclasses.replace(runtime, precision=str(args.precision))
+    if args.planner_enabled is not None:
+        runtime = dataclasses.replace(
+            runtime,
+            planner_enabled=(args.planner_enabled == "true"),
+        )
+        logging.info("Overriding runtime.planner_enabled=%s", runtime.planner_enabled)
 
     server = config.server
     if args.execution_mode is not None:

@@ -52,6 +52,15 @@ def parse_args() -> argparse.Namespace:
         default=os.environ.get("ORIGAMI_OPENPI_PARAM_DTYPE"),
         help="Override OpenPI checkpoint restore dtype for replay/server testing. Defaults to config/env bfloat16.",
     )
+    parser.add_argument(
+        "--planner-enabled",
+        choices=("true", "false"),
+        default=None,
+        help=(
+            "Override runtime.planner_enabled. false skips DINO/OOI/checkpoint-planner "
+            "and supplies OpenPI's masked zero planner-dropout prefix."
+        ),
+    )
     parser.add_argument("--skip-action-error", action="store_true", help="Do not compute action rollout error.")
     parser.add_argument("--skip-training-loss", action="store_true", help="Do not compute OpenPI training-style loss.")
     parser.add_argument("--dry-run", action="store_true", help="Only validate/count replay episodes; do not load models.")
@@ -152,6 +161,14 @@ def main() -> int:
         os.environ["ORIGAMI_OPENPI_PARAM_DTYPE"] = str(args.openpi_param_dtype)
         logging.info("Overriding OpenPI checkpoint restore dtype=%s", args.openpi_param_dtype)
     config = load_runtime_config(config_path=args.config, bundle_root=args.bundle_root)
+
+    if args.planner_enabled is not None:
+        runtime = dataclasses.replace(
+            config.runtime,
+            planner_enabled=(args.planner_enabled == "true"),
+        )
+        config = dataclasses.replace(config, runtime=runtime)
+        logging.info("Overriding runtime.planner_enabled=%s", runtime.planner_enabled)
 
     paths = config.paths
     if args.dataset_root is not None:
